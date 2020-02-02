@@ -16,7 +16,20 @@ Sys.setlocale("LC_ALL", "cs_CZ.utf.8")
 # nacti csv.
 # nektere predmety maji ";" v nazvu, do budoucna by bylo dobre pridat krok, který jeste pred read_csv nahradi "; " za ", "
 # nektere predmety maji uvozovky v nazvu, coz vyvolava EOL chybu pri nacteni, opet by to chtělo odstranit via skript
+
+# rok 2019, vsechny fakulty
 predmety_csv <- read.csv2("predmety_2019_muni.csv", encoding = "UTF-8", na.strings = "", quote = "")
+
+# leta 2016 - 2019, pouze FF
+xml_long <- read_file("prezentator_longterm.xml") %>% 
+  str_replace_all("; ", ", ")
+longterm_csv <- read_csv2(xml_long, col_names = c("Fakulta", "Pracoviste", "Forma", "Typ", "ISkod", "Obdobi", "UCO", "Semskup", "Rozvrh", "Frekvence", "Limit", "Zapis", "Registrace"))
+
+# predmety, které jsou prazdne dlouhodobě
+empties <- longterm_csv %>% group_by(ISkod) %>% 
+  summarise(n = n(),
+            max = max(Zapis)) %>% 
+  filter(max == 0)
 
 # odstranit nerealne fakulty
 predmety_master <- predmety_csv %>% 
@@ -103,11 +116,18 @@ kakat$Double <- Double_x
 ```
 
 
-Report se týká předmětů, které byly v roce 2019 na FF vypsány a rozvrhovány (tj. měly po celý semestr přidělenou učebnu), ale které nebyly reálně vyučovány (nemají žádné zapsané studenty). Podle informací IS-techniků mají být takovéto předměty z vypsaných předmětů odstraněny samotnými vyučujícími.
+Report se týká předmětů, které byly v roce 2019 na FF vypsány, ale které nebyly reálně vyučovány (nemají žádné zapsané studenty). Podle informací IS-techniků mají být takovéto předměty z vypsaných předmětů odstraněny samotnými vyučujícími.
 
-Počet takových předmětů se liší v závislosti na zvoleném filtru. Předmětů, které byly vypsány a rozvrhovány, ale nemají žádné zapsané studenty, je na FF celkem `r nrow(nepredmety_ff)`. Ne všechny tyto předměty ale znamenají reálně neobsazenou učebnu - v jeden čas může v jedné učebně probíhat výuka více předmětů (fakticky jeden předmět vypisovaný pod více IS kódy). Pokud odečteme případy, kdy se prázdný předmět kryje s jiným, neprázdným předmětem, dojdeme k číslu `r nrow(nepredmety_ff_final)`.
+Počet takových předmětů se liší v závislosti na tom, co za prázdný předmět považujeme. Nabízí se přinejmenším tři možná pojetí:
 
-Širší pojetí tedy znamená předměty, které si žádní studenti nezapsali, ale které i tak nebyly vyřazeny ze seznamu vypsaných předmětů v IS. Užší pojetí zahrnuje ty předměty, kterým byla přiřazena učebna, v níž se pak po v rozzvrhovaném čase nekonala žádná výuka. 
+- v **nejširším pojetí** jde o předměty, které si nezapíší žádní studenti. Z celkových `r nrow(predmety_ff)` předmětů vypsaných v roce 2019 tomu filtru odpovídá **`r nrow(filter(predmety_ff, Zapsanych == 0))` předmětů**,
+- v **širším pojetí** jde o předměty, které byly rozvrhovány, takže jsou spojeny s prezenční výukou a mají v IS přidělenou učebnu. V roce 2019 bylo na FF **`r nrow(nepredmety_ff)` takových předmětů**,
+- ve třetím, **užším pojetí**, lze počítat pouze ty předměty, které se nekryjí s žádným jiným předmětem vyučovaným ve stejném čase ve stejné učebně (stejný předmět bývá často vypisován pod různými IS kódy). Každý předměty vyhovující tomuto pojetí tedy znamená učebnu, která nebyla v daném čase reálně využívána. Tomuto hledisku odpovídá **`r nrow(nepredmety_ff_final)` předmětů **.
+
+
+U některých z těchto předmětů jde o dlouhodobý stav. Z předmětů spadajících do širšího pojetí bylo `r nrow(filter(nepredmety_ff, IS_kod %in% filter(empties, n >= 4)$ISkod))` od jara 2016 vypsáno alespoň čtyřikrát, pokaždé bez zapsaných studentů. `r nrow(filter(nepredmety_ff, IS_kod %in% filter(empties, n == 8)$ISkod))` jich pak bylo takto vypsáno, ale nerealizováno osmkrát.
+
+
 
 Seznam předmětů, které jednotlivým filtrům odpovídají, obsahují přiložené XLSX soubory. Níže následuje základní přehled rozdělení těchto předmětů podle období, typu a formy studia a garantních oddělení.
 
