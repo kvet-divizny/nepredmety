@@ -1,0 +1,275 @@
+---
+title: "Prázdné předměty na FF"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE, echo=FALSE}
+
+library(tidyverse)
+library(forcats)
+library(knitr)
+library(kableExtra)
+Sys.setlocale("LC_ALL", "cs_CZ.utf.8")
+
+# nacti csv.
+# nektere predmety maji ";" v nazvu, do budoucna by bylo dobre pridat krok, který jeste pred read_csv nahradi "; " za ", "
+# nektere predmety maji uvozovky v nazvu, coz vyvolava EOL chybu pri nacteni, opet by to chtělo odstranit via skript
+predmety_csv <- read.csv2("predmety_2019_muni.csv", encoding = "UTF-8", na.strings = "", quote = "")
+
+# odstranit nerealne fakulty
+predmety_master <- predmety_csv %>% 
+  filter(Fakulta %in% c("ESF", "PřF", "PrF", "PdF", "LF", "FF", "FSS", "FSpS", "FI", "FF", "CST"))
+
+predmety_master <- predmety_master %>% mutate(Id = 1:nrow(predmety_master)) %>% 
+  mutate(Forma_studia = fct_explicit_na(Forma_studia, na_level = "nevyplneno"),
+         Typ_studia = fct_explicit_na(Typ_studia, na_level = "nevyplneno"),
+         Frekvence = fct_explicit_na(Frekvence, na_level = "nevyplneno"))
+
+# fce pro filtrovani rozvrhovanych predmetu bez studentu
+get_empties <- function(x) {
+  filter(x, Zapsanych == 0 & !is.na(Rozvrh))
+}
+
+# fce pro dohledani predmetu s jinym kodem vyucovanych ve stejnem caste na stejnem miste (=> jen formalni nepredmety)
+get_doubles <- function(x, y, obdobi) {
+  any(x == filter(y, Zapsanych > 0 & Obdobi == obdobi)$Rozvrh)
+}
+
+sum_to_table <- function(x, y) {
+  group_by(x,y) %>% 
+  summarise("Širší pojetí" = n(),
+            "Užší pojetí" = sum(Fakticky == TRUE))
+}
+
+# ZPRACUJ PREDMETY NA FF
+predmety_ff <- filter(predmety_master, Fakulta == "FF")
+
+nepredmety_ff <- get_empties(predmety_ff)
+
+nepredmety_jaro_ff <- filter(nepredmety_ff, Obdobi == "jaro 2019")
+nepredmety_podzim_ff <- filter(nepredmety_ff, Obdobi == "podzim 2019")
+
+
+# rozlisit formalni a fakticke nepredmety
+nepredmety_jaro_ff$Double <- nepredmety_jaro_ff$Rozvrh %>%  map_lgl(~ get_doubles(x = ., y = predmety_ff, obdobi = "jaro 2019"))
+
+nepredmety_podzim_ff$Double <- nepredmety_podzim_ff$Rozvrh %>% map_lgl(~ get_doubles(x = ., y = predmety_ff, obdobi = "podzim 2019"))
+
+
+# odebrat formalni nepredmety
+nepredmety_jaro_ff_final <- filter(nepredmety_jaro_ff,
+                                   is.na(Double)) %>% 
+  distinct(Rozvrh, .keep_all = TRUE)
+
+nepredmety_podzim_ff_final <- filter(nepredmety_podzim_ff,
+                                     is.na(Double)) %>% 
+  distinct(Rozvrh, .keep_all = TRUE)
+
+# spojit znovu do jednoho
+nepredmety_ff_final <- bind_rows(nepredmety_jaro_ff_final, nepredmety_podzim_ff_final)
+
+nepredmety_ff$Fakticky <- nepredmety_ff$Id %in% nepredmety_ff_final$Id
+
+
+# OSTATNI FAKULTY
+non_ff <- predmety_master %>% filter(Fakulta != "FF") %>% 
+  get_empties()
+
+
+# oznac formalni × fakticke nepredmety (for loop, protoze mene srani)
+Double <- vector()
+for (i in 1:nrow(non_ff)) {
+  Double_i <- any(non_ff$Rozvrh[i] == filter(predmety_master, Zapsanych > 0 & Obdobi == non_ff$Obdobi[i] & Fakulta == non_ff$Fakulta[i])$Rozvrh)
+  Double <- append(Double, Double_i)
+}
+
+non_ff$Double <- Double
+
+kakat <- get_empties(predmety_master)
+Double_x <- vector()
+for (i in 1:nrow(kakat)) {
+  Double_ix <- any(kakat$Rozvrh[i] == filter(predmety_master, Zapsanych > 0 & Obdobi == kakat$Obdobi[i] & Fakulta == kakat$Fakulta[i])$Rozvrh)
+  Double_x <- append(Double_x, Double_ix)
+}
+
+kakat$Double <- Double_x
+
+```
+
+```{r echo=FALSE}
+
+```
+
+
+Report se týká předmětů, které byly v roce 2019 na FF vypsány a rozvrhovány (tj. měly po celý semestr přidělenou učebnu), ale které nebyly reálně vyučovány (nemají žádné zapsané studenty). Podle informací IS-techniků mají být takovéto předměty z vypsaných předmětů odstraněny samotnými vyučujícími.
+
+Počet takových předmětů se liší v závislosti na zvoleném filtru. Předmětů, které byly vypsány a rozvrhovány, ale nemají žádné zapsané studenty, je na FF celkem `r nrow(nepredmety_ff)`. Ne všechny tyto předměty ale znamenají reálně neobsazenou učebnu - v jeden čas může v jedné učebně probíhat výuka více předmětů (fakticky jeden předmět vypisovaný pod více IS kódy). Pokud odečteme případy, kdy se prázdný předmět kryje s jiným, neprázdným předmětem, dojdeme k číslu `r nrow(nepredmety_ff_final)`.
+
+Širší pojetí tedy znamená předměty, které si žádní studenti nezapsali, ale které i tak nebyly vyřazeny ze seznamu vypsaných předmětů v IS. Užší pojetí zahrnuje ty předměty, kterým byla přiřazena učebna, v níž se pak po v rozzvrhovaném čase nekonala žádná výuka. 
+
+Seznam předmětů, které jednotlivým filtrům odpovídají, obsahují přiložené XLSX soubory. Níže následuje základní přehled rozdělení těchto předmětů podle období, typu a formy studia a garantních oddělení.
+
+
+
+### Počet prázdných předmětů podle období
+
+
+```{r echo = FALSE}
+# nepredmety podle obdobi
+sirsi_obdobi <- nepredmety_ff %>% count(Obdobi)
+uzsi_obdobi <- nepredmety_ff_final %>% count(Obdobi)
+
+obdobi <- nepredmety_ff %>% group_by(Obdobi) %>% 
+  summarise(total = n(),
+            narrow = sum(Fakticky == TRUE))
+
+kable(obdobi, col.names = c("Období", "Širší pojetí", "Užší pojetí"), booktabs = T, linesep = "") %>% 
+  kable_styling(bootstrap_options = c("striped","hover","condensed","responsive"), full_width = F, position = "left", latex_options = "striped")
+```
+
+
+
+### Počet prázdných předmětů podle garantních oddělení
+
+
+```{r echo = FALSE}
+# nepredmety podle pracovist
+sirsi_pracoviste <- nepredmety_ff %>% count(Garantni_oddeleni)
+uzsi_pracoviste <- nepredmety_ff_final %>% count(Garantni_oddeleni)
+
+pracoviste <- nepredmety_ff %>% group_by(Garantni_oddeleni) %>% 
+  summarise(total = n(),
+            narrow = sum(Fakticky == TRUE))
+ 
+kable(pracoviste, col.names = c("Pracoviště", "Širší pojetí", "Užší pojetí"), booktabs = T, linesep = "") %>% 
+  kable_styling(bootstrap_options = c("striped","hover","condensed","responsive"), full_width = F, position = "left", latex_options = "striped")
+
+ggplot(nepredmety_ff, aes(x = Garantni_oddeleni, fill = Fakticky)) +
+  geom_bar() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5,  )) +
+  scale_fill_discrete(guide = FALSE) +
+  theme(axis.title = element_blank())
+
+```
+
+Sloupce značí počet prázdných předmětů v širším pojetí. Zeleně je značen počet předmětů odpovídající užšímu pojetí.
+
+
+
+Velká část prázdných předmětů je vypisována Jazykovou školou při KAA FF. Jde o placené kurzy nabízené studentům MU i širší veřejnosti (viz https://jazykovka.phil.muni.cz/). Z 80 kurzů vypisovaných FFJS je 55 prázdných. Je ale otázka, do jaké míty je výuka těchto kurzů administrativně nezávislá na IS MU.
+
+
+
+### Počty prázdných předmětů podle typu studia
+
+
+```{r echo = FALSE}
+# podle typu a formy studia
+
+typ <- nepredmety_ff %>% group_by(Typ_studia) %>% 
+  summarise(total = n(),
+            narrow = sum(Fakticky == TRUE))
+
+
+forma <- nepredmety_ff %>% group_by(Forma_studia) %>% 
+  summarise(total = n(),
+            narrow = sum(Fakticky == TRUE))
+
+kable(typ, col.names = c("Typ studia", "Širší pojetí", "Užší pojetí"), booktabs = T, linesep = "") %>% 
+  kable_styling(bootstrap_options = c("striped","hover","condensed","responsive"), full_width = F, position = "left", latex_options = "striped")
+
+```
+
+Předměty mohou být zároveň vypsány pod více typy studia. Hodnota _nevyplneno_ znamená, že informace není do IS zadaná (55 kurzů FFJS je nabízeno veřejnosti a nemá proto typ ani formu studia vyplněnou).
+
+
+
+
+### Počet prázdných předmětů podle formy studia
+
+
+```{r echo=FALSE}
+
+kable(forma, col.names = c("Forma studia", "Širší pojetí", "Užší pojetí"), booktabs = T, linesep = "") %>% 
+  kable_styling(bootstrap_options = c("striped","hover","condensed","responsive"), full_width = F, position = "left", latex_options = "striped")
+
+```
+
+
+
+
+### Počet prázdných předmětů podle četnosti výuky
+
+
+```{r echo=FALSE}
+# podle frekvence výuky
+
+frekvence <- nepredmety_ff %>% group_by(Frekvence) %>%
+  summarise(n = n(),
+            narrow = sum(Fakticky == TRUE))
+
+kable(frekvence, col.names = c("Předmět vyučován", "Širší pojetí", "Užší pojetí"), booktabs = T, linesep = "") %>% 
+  kable_styling(bootstrap_options = c("striped","hover","condensed","responsive"), full_width = F, position = "left", latex_options = "striped")
+
+```
+
+Předměty vyučované blokově by v užším pojetí nemusely být počítány, neblokují totiž učebny pravidelně po celý semestr.
+
+
+
+
+
+### Porovnání počtu prázdných předmětů na ostatních fakultách
+
+
+```{r echo=FALSE}
+# srovnání s jinými fakultami
+
+non_ff_table <- non_ff %>% group_by(Fakulta) %>% 
+  summarise(n = n(),
+            narrow = sum(is.na(Double)))
+
+kable(non_ff_table, col.names = c("Fakulta", "Širší pojetí", "Užší pojetí"), booktabs = T, linesep = "") %>% 
+  kable_styling(bootstrap_options = c("striped","hover","condensed","responsive"), full_width = F, position = "left", latex_options = "striped")
+
+```
+
+
+
+Počet prázných předmětů na ostatních fakultách je na první pohled nižší než na FF (kde evidujeme **`r nrow(nepredmety_ff)`, respektive `r nrow(nepredmety_ff_final)` prázdných předmětů**. Filozofická fakulta má sice dalece nejvyšší počet vypsaných předmětů, i procentuální podíl prázdných předmětů je však vyšší než na ostatních fakultách.
+
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+fakulty_n <- predmety_master %>% count(Fakulta)
+
+fakulty_proc <- sapply(levels(predmety_master$Fakulta) ,function (x) nrow(filter(kakat, Fakulta == x)) / nrow(filter(predmety_master, Fakulta == x)) * 100)
+
+fakulty_proc_narrow <- sapply(levels(predmety_master$Fakulta) ,function (x) nrow(filter(kakat, Fakulta == x & is.na(Double))) / nrow(filter(predmety_master, Fakulta == x)) * 100)
+
+fakulty <- right_join(fakulty_n, rownames_to_column(data.frame(fakulty_proc, fakulty_proc_narrow)), by = c("Fakulta" = "rowname")) %>%
+  mutate_if(is.numeric, round, digits = 2) %>% 
+  mutate_at(vars(contains("proc")), function(x) paste(x, "%"))
+
+
+kable(fakulty, col.names = c("Fakulta", "Vypsaných předmětů", "Podíl prázdných předmětů", "Podíl prázdných předmětů (užší pojetí)"), booktabs = T, linesep = "") %>% 
+  kable_styling(bootstrap_options = c("striped","hover","condensed","responsive"), full_width = F, position = "left", latex_options = "striped")
+
+
+```
+
+
+
+```{r include=FALSE}
+
+nepredmety_ff %>% select(c("Garantni_oddeleni", "Forma_studia", "Typ_studia", "IS_kod","Nazev", "Obdobi", "Sem_skupin", "Rozvrh", "Frekvence", "Zapsanych")) %>%
+  write_csv2("prazdne_sirsi.csv")
+
+nepredmety_ff_final %>% select(c("Garantni_oddeleni", "Forma_studia", "Typ_studia", "IS_kod","Nazev", "Obdobi", "Sem_skupin", "Rozvrh", "Frekvence", "Zapsanych")) %>%
+  write_csv2("prazdne_uzsi.csv")
+
+```
+
